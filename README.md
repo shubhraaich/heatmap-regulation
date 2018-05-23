@@ -2,3 +2,4 @@
 
 #### [Pretrained Models](https://drive.google.com/open?id=1qPjB8QaYOLofUUzgz4Mc9iY6e40DpjKy)
 
+##### Note that the GAP-GAS models actually refer to the HR models in this repo.
