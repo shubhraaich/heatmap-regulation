@@ -1,4 +1,4 @@
-#### Initial Preprocessing (Partial)
+#### Initial Preprocessing
 
 * prep\_train\_data.m
 * save\_resize\_gam\_image.m
