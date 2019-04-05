@@ -4,7 +4,7 @@ import pandas as pd
 
 from open_files import *
 
-base_path = '/media/aich/DATA/tmp_models/cc_sjtu_15_full';
+base_path = '../../data/cc_sjtu';
 res_path_list = ['results_simple', 'results_gap_gas'];
 
 

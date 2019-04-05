@@ -2,7 +2,7 @@ import os
 import shutil
 import random
 
-base_path = '/media/aich/DATA/carpk/datasets';
+base_path = '../../data/carpk_pucpr';
 data_paths = ['CARPK_devkit/data', 'PUCPR+_devkit/data'];
 in_path = 'train';
 out_path = 'val';

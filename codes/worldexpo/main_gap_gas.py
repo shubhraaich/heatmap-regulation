@@ -18,14 +18,15 @@ import torchvision.models as models
 import numpy as np
 
 #import torchvision.transforms as transforms
-import transforms
-import datasets_carpk
+import transforms_ccsjtu
+import datasets_ccsjtu
 
+from model_defs.vgg_gap_gas import vgg_gap_gas
 from open_files import *
 
 cudnn.benchmark = False;
 
-parser = argparse.ArgumentParser(description='PyTorch CARPK Training')
+parser = argparse.ArgumentParser(description='PyTorch lcc Training')
 parser.add_argument('--train', default=1, type=int, metavar='N',
                     help='train(1) or test(0)');
 parser.add_argument('--img-dir', type=str, metavar='DIR',
@@ -67,37 +68,23 @@ def main():
     args = parser.parse_args()
 
     # create model
-    if args.arch == 'vgg16' :
-        if args.train==1 :
-            model = models.vgg16(pretrained=True);
-        else :
-            model = models.vgg16();
-        tmp = list(model.features.children());
-        for i in xrange(8) :
-            tmp.pop();
-        # ==== replace relu with prelu ===== #
-#        id_relu = [1,3,6,8,11,13,15,18,20,22];
-#        for i in id_relu :
-#            tmp[i] = nn.PReLU(tmp[i-1].out_channels);
-        # =========================================== #
-        tmp.append(nn.AvgPool2d(kernel_size=(45,80), stride=(45,80))); # 45,80
-        model.features = nn.Sequential(*tmp);
-        model.classifier = nn.Linear(in_features=512, out_features=1);
+    if args.arch.startswith("vgg") :
+        model = vgg_gap_gas(pretrained=True, input_size=(72,90));
         model = nn.DataParallel(model);
 
     if args.train == 1 :
         # open log fileg
-        log_dir = 'logs_simple';
+        log_dir = 'logs_gap_gas';
         log_name = args.arch + '_new.csv';
         if not os.path.isdir(log_dir) :
             os.mkdir(log_dir);
         log_handle = get_file_handle(os.path.join(log_dir, log_name), 'wb+');
         log_handle.write('Epoch, LearningRate, Momentum, WeightDecay,' + \
-                        'Loss, TotalCount, Difference, Overestimate, Underestimate, RelativeDifference\n');
+                        'LossCount, LossCam, TotalCount, Difference, Overestimate, Underestimate, RelativeDifference\n');
         log_handle.close();
 
     # check model directory
-    model_dir = 'models_simple';
+    model_dir = 'models_gap_gas';
     if not os.path.isdir(model_dir) :
         os.mkdir(model_dir);
 
@@ -126,7 +113,8 @@ def main():
 #    std=[0.229, 0.224, 0.225];
 
     if args.train == 1 :
-        criterion = nn.SmoothL1Loss().cuda();
+        criterion_count = nn.SmoothL1Loss().cuda();
+        criterion_cam = nn.L1Loss().cuda();
 
         if args.optim == 'adam' :
             optimizer = torch.optim.Adam(model.parameters(),
@@ -144,12 +132,17 @@ def main():
 
         # Data loading code
         train_loader = torch.utils.data.DataLoader(
-            datasets_carpk.ImageFolder_Simple(img_dir=img_dir, ann_dir=ann_dir,
-                transform=transforms.Compose([
-                    transforms.RandomHorizontalFlip(),
-                    transforms.RandomVerticalFlip(),
-                    transforms.ToTensor(),
-                    transforms.Normalize(mean=mean, std=std),
+            datasets_ccsjtu.ImageFolder(img_dir=img_dir, gam_dir=gam_dir, ann_dir=ann_dir,
+                transform_joint=transforms_ccsjtu.Compose_Joint([
+                    transforms_ccsjtu.RandomHorizontalFlip(),
+                    transforms_ccsjtu.RandomVerticalFlip(),
+                ]),
+                transform=transforms_ccsjtu.Compose([
+                    transforms_ccsjtu.ToTensor(),
+                    transforms_ccsjtu.Normalize(mean=mean, std=std),
+                ]),
+                gam_transform=transforms_ccsjtu.Compose([
+                    transforms_ccsjtu.ToTensor2D(),
                 ]),
             ),
             batch_size=args.batch_size, shuffle=True,
@@ -162,7 +155,8 @@ def main():
 
         for epoch in range(args.start_epoch, args.end_epoch+1):
             # train for one epoch
-            stats_epoch = train(train_loader, model, criterion, optimizer, epoch);
+            stats_epoch = train(train_loader, model, criterion_count,
+                                                criterion_cam, optimizer, epoch);
             validate(img_dir, ann_dir, model, val_transform, epoch);
 
             model_name = args.arch + '_ep_' + str(epoch) + '.pth.tar';
@@ -202,7 +196,8 @@ def main():
                             str(cur_lr) + ',' +
                             str(cur_momentum) + ',' +
                             str(cur_wd) + ',' +
-                            str(stats_epoch['loss']) + ',' +
+                            str(stats_epoch['loss_count']) + ',' +
+                            str(stats_epoch['loss_cam']) + ',' +
                             str(stats_epoch['total_count']) + ',' +
                             str(stats_epoch['totalest']) + ',' +
                             str(stats_epoch['overest']) + ',' +
@@ -215,6 +210,9 @@ def main():
             if epoch == 10 : # from 11
                 for param_group in optimizer.param_groups:
                     param_group['lr'] *= 0.1;
+#            if epoch == 30 : # from 31
+#                for param_group in optimizer.param_groups:
+#                    param_group['lr'] *= 0.1;
 #            adjust_learning_rate(optimizer, epoch, 30); # adjust learning rate
 
     elif args.train == 0 : # test
@@ -223,15 +221,16 @@ def main():
                     transforms.ToTensor(),
                     transforms.Normalize(mean=mean, std=std),
                 ]);
-        test(test_transform, model, args.arch, load_epoch, img_dir, gam_dir, ann_dir);
+        test(test_transform, model, args.arch, load_epoch, img_dir, ann_dir);
 
 # ----------------------------------------------------------------------- #
 
-def train(train_loader, model, criterion, optimizer, epoch):
+def train(train_loader, model, criterion_count, criterion_cam, optimizer, epoch):
     global args
     batch_time = AverageMeter()
     data_time = AverageMeter()
-    losses = AverageMeter()
+    losses_count = AverageMeter()
+    losses_cam = AverageMeter()
 
     underest_epoch, overest_epoch, totalest_epoch, total_count = 0.0, 0.0, 0.0, 0.0;
 
@@ -239,7 +238,7 @@ def train(train_loader, model, criterion, optimizer, epoch):
     model.train()
 
     time_start = time.time()
-    for i, (input, target) in enumerate(train_loader):
+    for i, (input, target, gam) in enumerate(train_loader):
         # measure data loading time
         data_time.update(time.time() - time_start);
 
@@ -247,13 +246,28 @@ def train(train_loader, model, criterion, optimizer, epoch):
         input_var = torch.autograd.Variable(input).cuda();
         target_var = torch.autograd.Variable(target);
 
+        gam = gam.view(gam.size(0), -1);
+        gam_var = torch.autograd.Variable(gam).cuda();
+
         # compute output
-        output = model(input_var)
-        loss = criterion(output, target_var)
+        output_count, output_cam = model(input_var);
+
+        # rescale gam
+#        max_, _ = output_cam.data.max(1);
+#        min_, _ = output_cam.data.min(1);
+#        gam_var.data.mul_((max_-min_).unsqueeze(1).expand_as(gam_var));
+#        gam_var.data.add_((min_).unsqueeze(1).expand_as(gam_var));
+#        print("min", output_cam.data.min(1)[0], gam_var.data.min(1)[0]);
+#        print("max", output_cam.data.max(1)[0], gam_var.data.max(1)[0]);
+
+        loss_count = criterion_count(output_count, target_var)
+        loss_cam = criterion_cam(output_cam, gam_var)
+        loss = loss_count + 0.25 * loss_cam
 
         # measure accuracy and record loss
-        overest, underest, totalest, batch_count = accuracy(output.data, target)
-        losses.update(loss.data[0], input.size(0))
+        overest, underest, totalest, batch_count = accuracy(output_count.data, target)
+        losses_count.update(loss_count.data[0], input.size(0));
+        losses_cam.update(loss_cam.data[0], input.size(0));
 
         underest_epoch += underest;
         overest_epoch += overest;
@@ -270,42 +284,45 @@ def train(train_loader, model, criterion, optimizer, epoch):
         time_start = time.time();
 
         if i % args.print_freq == 0:
-            print('Epoch: [{0}][{1}/{2}]\t'
-                  'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-                  'Data {data_time.val:.3f} ({data_time.avg:.3f})\t'
-                  'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
-                  'Overestimate {overest:.3f} \t'
-                  'Underestimate {underest:.3f} \t'
-                  'TotalDifference {totalest:.3f} \t'
-                  'Count {batch_count:.3f}'.format(
+            print('Epoch: [{0}][{1}/{2}]  '
+                  'Time {batch_time.val:.3f} ({batch_time.avg:.3f})  '
+                  'Data {data_time.val:.3f} ({data_time.avg:.3f})  '
+                  'Loss(Count) {loss_count.val:.1f} ({loss_count.avg:.1f})  '
+                  'Loss(Cam) {loss_cam.val:.3f} ({loss_cam.avg:.3f})  '
+                  'Overestimate {overest:.1f}  '
+                  'Underestimate {underest:.1f}  '
+                  'TotalDifference {totalest:.1f}  '
+                  'Count {batch_count:.1f}'.format(
                    epoch, i, len(train_loader), batch_time=batch_time,
-                   data_time=data_time, loss=losses, overest=overest,
-                   underest=underest, totalest=totalest, batch_count=batch_count));
+                   data_time=data_time, loss_count=losses_count, loss_cam=losses_cam,
+                   overest=overest, underest=underest, totalest=totalest,
+                   batch_count=batch_count));
 
-    return {'loss':losses.avg, 'overest':overest_epoch, 'underest':underest_epoch,
-                    'totalest':totalest_epoch, 'total_count':total_count};
+    return {'loss_count':losses_count.avg, 'loss_cam':losses_cam.avg,
+            'overest':overest_epoch, 'underest':underest_epoch,
+            'totalest':totalest_epoch, 'total_count':total_count};
 
 
 def validate(img_dir, ann_dir, model, val_transform, epoch) :
-    img_dir = os.path.join(os.path.dirname(img_dir), "val_half");
-    val_dif_fname = 'val_diff_old_simple';
+    img_dir = os.path.join(os.path.dirname(img_dir), "val");
+    ann_dir = os.path.join(os.path.dirname(ann_dir), "count_val" + ".mat");
+    val_dif_fname = 'val_diff_old_gap_gas';
 
-    images = datasets_carpk.make_dataset_test(img_dir=img_dir,
+    images = datasets_ccsjtu.make_dataset(img_dir=img_dir,
                                          gam_dir=None,
-                                         ann_dir=ann_dir
-                                         );
+                                         ann_dir=ann_dir, is_copy=False);
 
     model.eval();
 
     diff_abs = 0.;
     for i, (img_path, gam_path, target) in enumerate(images):
         # measure data loading time
-        input = val_transform(datasets_carpk.default_loader(img_path)).unsqueeze(0);
+        input = val_transform(datasets_ccsjtu.default_loader(img_path)).unsqueeze(0);
         input_var = torch.autograd.Variable(input, volatile=True).cuda();
 
         # compute output
-        output = model(input_var);
-        pred = int(round(output.data.cpu()[0,0]));
+        output_count, _ = model(input_var);
+        pred = int(round(output_count.data.cpu()[0,0]));
         diff_abs += abs(pred-target);
 
     if epoch == 1:
@@ -317,7 +334,9 @@ def validate(img_dir, ann_dir, model, val_transform, epoch) :
     print(diff_old[-1]);
 
 
-def test(test_transform, model, arch_type, load_epoch, img_dir, gam_dir, ann_dir) :
+def test(test_transform, model, arch_type, load_epoch, img_dir, ann_dir) :
+    import cv2;
+    import scipy.io;
     global args
     batch_time = AverageMeter()
     data_time = AverageMeter()
@@ -326,60 +345,49 @@ def test(test_transform, model, arch_type, load_epoch, img_dir, gam_dir, ann_dir
     model.eval();
     model.cuda();
 
-    out_cam_dir = os.path.join(os.path.dirname(img_dir), 'test_cam_simple');
-    out_filename = 'out_' + arch_type + '_ep_' + str(load_epoch) + '_simple.csv';
-    out_filename = os.path.join(os.path.dirname(img_dir), out_filename);
-    if not os.path.isdir(out_cam_dir) :
-        os.mkdir(out_cam_dir);
+    out_cam_dir = os.path.join(os.path.dirname(img_dir), 'test_cam_gap_gas');
+    out_res_dir = os.path.join(os.path.dirname(img_dir), 'results_gap_gas');
+    rm_old_mk_new_dir(out_cam_dir);
+    rm_old_mk_new_dir(out_res_dir);
 
-    out_fhand = get_file_handle(out_filename, 'wb+');
-    out_fhand.write('path,target,predicted\n');
 
-    images = datasets_carpk.make_dataset_test(img_dir, gam_dir, ann_dir);
+    images_all = datasets_ccsjtu.make_dataset_test(img_dir, ann_dir);
     time_start = time.time()
 
-    cam_weights = model.module.classifier.weight.data.cpu().clone();
-    cam_weights.unsqueeze_(2).unsqueeze_(3);
-    from copy import deepcopy;
-    import scipy.io;
-    import cv2;
-    model_cam_part = deepcopy(model);
-    tmp = list(model_cam_part.module.features.children());
-    tmp.pop();
-    model_cam_part.module = nn.Sequential(*tmp);
-    for i, (img_path, gam_path, target) in enumerate(images):
-        # measure data loading time
-        data_time.update(time.time() - time_start);
+    for sub_dir in images_all :
+        images = images_all[sub_dir];
+        out_fhand = get_file_handle(os.path.join(out_res_dir, sub_dir + ".csv"), 'wb+');
+        for i, (img_path, target) in enumerate(images):
+            # measure data loading time
+            data_time.update(time.time() - time_start);
 
-        input = test_transform(datasets_carpk.default_loader(img_path)).unsqueeze(0);
-        input_var = torch.autograd.Variable(input, volatile=True).cuda();
+            input = test_transform(datasets_ccsjtu.default_loader(img_path)).unsqueeze(0);
+            input_var = torch.autograd.Variable(input, volatile=True).cuda();
 
-        # compute output
-        output = model(input_var);
-        output_cam = model_cam_part(input_var).data.cpu();
-        output_cam.mul_(cam_weights.expand_as(output_cam));
-        output_cam = output_cam.sum(1).squeeze_();
-        pred = int(round(output.data.cpu()[0,0]));
+            # compute output
+            output_count, output_cam = model(input_var);
+            output_cam = output_cam.data.cpu().view(output_cam.size(0), 72, 90).squeeze();
+            pred = int(round(output_count.data.cpu()[0,0]));
 
-        out_fhand.write(os.path.basename(img_path) + ',' + str(target) + ',' + str(pred) + '\n');
-        # convert to cam image using colormap conversion
-        output_cam = output_cam.numpy();
-        output_cam = cv2.resize(output_cam, None, fx=8, fy=8, interpolation=cv2.INTER_CUBIC);
-        output_cam = (output_cam-output_cam.min())/(output_cam.max()-output_cam.min());
-        scipy.io.savemat(os.path.join(out_cam_dir,
-                            os.path.splitext(os.path.basename(img_path))[0] + '.mat'),
-                            {'data':output_cam}
-                        );
-        # measure elapsed time
-        batch_time.update(time.time() - time_start);
-        time_start = time.time();
+            out_fhand.write(os.path.basename(img_path) + ',' + str(target) + ',' + str(pred) + '\n');
+            # convert to cam image using colormap conversion
+            output_cam = output_cam.numpy();
+            output_cam = cv2.resize(output_cam, None, fx=8, fy=8, interpolation=cv2.INTER_CUBIC);
+            output_cam = (output_cam-output_cam.min())/(output_cam.max()-output_cam.min());
+            scipy.io.savemat(os.path.join(out_cam_dir,
+                                os.path.splitext(os.path.basename(img_path))[0] + '.mat'),
+                                {'data':output_cam}
+                            );
+            # measure elapsed time
+            batch_time.update(time.time() - time_start);
+            time_start = time.time();
 
-        print('Batch: [{0}/{1}]\t'
-              'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-              'Data {data_time.val:.3f} ({data_time.avg:.3f})'.format(
-               i+1, len(images), batch_time=batch_time, data_time=data_time));
+            print('Batch: [{0}/{1}]\t'
+                  'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
+                  'Data {data_time.val:.3f} ({data_time.avg:.3f})'.format(
+                   i+1, len(images), batch_time=batch_time, data_time=data_time));
 
-    out_fhand.close();
+        out_fhand.close();
 
 
 class AverageMeter(object):

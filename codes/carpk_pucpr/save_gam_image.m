@@ -1,6 +1,6 @@
 clear all; close all; clc;
 
-base_path = '/media/aich/DATA/carpk/datasets';
+base_path = '../../data/carpk_pucpr';
 data_paths = {'CARPK_devkit/data', 'PUCPR+_devkit/data'};
 height_gauss = [40, 30]; % based on the mean values got from vis_height_weight.m
 img_extensions = {'.png', '.jpg'};

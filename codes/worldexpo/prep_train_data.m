@@ -5,7 +5,7 @@ rng(72);
 hsize_gauss = 15; % 
 val_perc = 0.03; % validation percentage
 
-base_path = '/media/aich/DATA/cc_sjtu';
+base_path = '../../data/cc_sjtu';
 in_train_rgb_path = 'train_frame';
 in_train_gt_path = 'train_label';
 out_train_rgb_path = 'train';

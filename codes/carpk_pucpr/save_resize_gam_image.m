@@ -1,7 +1,7 @@
 % save 1/2, 1/4, 1/8, 1/16th images
 clear all; close all; clc;
 
-base_path = '/media/aich/DATA/carpk/datasets';
+base_path = '../../data/carpk_pucpr';
 data_paths = {'CARPK_devkit/data', 'PUCPR+_devkit/data'};
 img_extensions = {'.png', '.jpg'};
 gam_paths = {'train_gam'};

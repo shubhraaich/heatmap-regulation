@@ -4,7 +4,7 @@ clear all; close all; clc;
 FACT_REDUC = 8; % 8-times reduction
 img_ext_gam = '.png';
 
-base_path = '/media/aich/DATA/cc_sjtu';
+base_path = '../../data/cc_sjtu';
 in_gam_path = 'train_gam';
 
 out_gam_path = [in_gam_path, '_', num2str(FACT_REDUC)];

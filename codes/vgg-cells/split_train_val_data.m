@@ -1,7 +1,7 @@
 clear all; close all; clc;
 
 % =========================================================== %
-base_path = '/media/aich/DATA/vgg_cells';
+base_path = '../../data/vgg_cells';
 in_rgb_path = 'train';
 in_gam_path = 'train_gam_8';
 

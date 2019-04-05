@@ -3,7 +3,7 @@ clear all; close all; clc;
 % =========================================================== %
 hsize_gauss = 1; % unit ratio for gaussian window size 
 
-base_path = '/media/aich/DATA/vgg_cells';
+base_path = '../../data/vgg_cells';
 in_path = 'train_split';
 in_rgb_postfix = 'cell.png';
 in_dot_postfix = 'dots.png';

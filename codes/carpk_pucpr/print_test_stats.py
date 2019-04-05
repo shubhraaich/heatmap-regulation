@@ -55,7 +55,7 @@ def print_file_stats(filename_csv, target_list, pred_list) :
 
 
 def main() :
-    res_dir = '/media/aich/DATA/tmp_models/pucpr/results';
+    res_dir = '../../data/carpk_pucpr/CARPK_devkit/';
     for file_ in sorted(os.listdir(res_dir)) :
         if not file_.endswith('.csv') :
             continue;

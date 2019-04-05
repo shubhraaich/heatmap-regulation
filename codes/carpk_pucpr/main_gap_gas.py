@@ -18,15 +18,15 @@ import torchvision.models as models
 import numpy as np
 
 #import torchvision.transforms as transforms
-import transforms_ccsjtu
-import datasets_ccsjtu
+import transforms_carpk
+import datasets_carpk
 
 from model_defs.vgg_gap_gas import vgg_gap_gas
 from open_files import *
 
 cudnn.benchmark = False;
 
-parser = argparse.ArgumentParser(description='PyTorch lcc Training')
+parser = argparse.ArgumentParser(description='PyTorch CARPK/PUCPR Training')
 parser.add_argument('--train', default=1, type=int, metavar='N',
                     help='train(1) or test(0)');
 parser.add_argument('--img-dir', type=str, metavar='DIR',
@@ -69,7 +69,7 @@ def main():
 
     # create model
     if args.arch.startswith("vgg") :
-        model = vgg_gap_gas(pretrained=True, input_size=(72,90));
+        model = vgg_gap_gas(pretrained=True, input_size=(45,80));
         model = nn.DataParallel(model);
 
     if args.train == 1 :
@@ -132,17 +132,17 @@ def main():
 
         # Data loading code
         train_loader = torch.utils.data.DataLoader(
-            datasets_ccsjtu.ImageFolder(img_dir=img_dir, gam_dir=gam_dir, ann_dir=ann_dir,
-                transform_joint=transforms_ccsjtu.Compose_Joint([
-                    transforms_ccsjtu.RandomHorizontalFlip(),
-                    transforms_ccsjtu.RandomVerticalFlip(),
+            datasets_carpk.ImageFolder(img_dir=img_dir, gam_dir=gam_dir, ann_dir=ann_dir,
+                transform_joint=transforms_carpk.Compose_Joint([
+                    transforms_carpk.RandomHorizontalFlip(),
+                    transforms_carpk.RandomVerticalFlip(),
                 ]),
-                transform=transforms_ccsjtu.Compose([
-                    transforms_ccsjtu.ToTensor(),
-                    transforms_ccsjtu.Normalize(mean=mean, std=std),
+                transform=transforms_carpk.Compose([
+                    transforms_carpk.ToTensor(),
+                    transforms_carpk.Normalize(mean=mean, std=std),
                 ]),
-                gam_transform=transforms_ccsjtu.Compose([
-                    transforms_ccsjtu.ToTensor2D(),
+                gam_transform=transforms_carpk.Compose([
+                    transforms_carpk.ToTensor2D(),
                 ]),
             ),
             batch_size=args.batch_size, shuffle=True,
@@ -221,7 +221,7 @@ def main():
                     transforms.ToTensor(),
                     transforms.Normalize(mean=mean, std=std),
                 ]);
-        test(test_transform, model, args.arch, load_epoch, img_dir, ann_dir);
+        test(test_transform, model, args.arch, load_epoch, img_dir, gam_dir, ann_dir);
 
 # ----------------------------------------------------------------------- #
 
@@ -304,20 +304,20 @@ def train(train_loader, model, criterion_count, criterion_cam, optimizer, epoch)
 
 
 def validate(img_dir, ann_dir, model, val_transform, epoch) :
-    img_dir = os.path.join(os.path.dirname(img_dir), "val");
-    ann_dir = os.path.join(os.path.dirname(ann_dir), "count_val" + ".mat");
+    img_dir = os.path.join(os.path.dirname(img_dir), "val_half");
     val_dif_fname = 'val_diff_old_gap_gas';
 
-    images = datasets_ccsjtu.make_dataset(img_dir=img_dir,
+    images = datasets_carpk.make_dataset_test(img_dir=img_dir,
                                          gam_dir=None,
-                                         ann_dir=ann_dir, is_copy=False);
+                                         ann_dir=ann_dir
+                                         );
 
     model.eval();
 
     diff_abs = 0.;
     for i, (img_path, gam_path, target) in enumerate(images):
         # measure data loading time
-        input = val_transform(datasets_ccsjtu.default_loader(img_path)).unsqueeze(0);
+        input = val_transform(datasets_carpk.default_loader(img_path)).unsqueeze(0);
         input_var = torch.autograd.Variable(input, volatile=True).cuda();
 
         # compute output
@@ -334,7 +334,7 @@ def validate(img_dir, ann_dir, model, val_transform, epoch) :
     print(diff_old[-1]);
 
 
-def test(test_transform, model, arch_type, load_epoch, img_dir, ann_dir) :
+def test(test_transform, model, arch_type, load_epoch, img_dir, gam_dir, ann_dir) :
     import cv2;
     import scipy.io;
     global args
@@ -346,48 +346,48 @@ def test(test_transform, model, arch_type, load_epoch, img_dir, ann_dir) :
     model.cuda();
 
     out_cam_dir = os.path.join(os.path.dirname(img_dir), 'test_cam_gap_gas');
-    out_res_dir = os.path.join(os.path.dirname(img_dir), 'results_gap_gas');
-    rm_old_mk_new_dir(out_cam_dir);
-    rm_old_mk_new_dir(out_res_dir);
+    out_filename = 'out_' + arch_type + '_ep_' + str(load_epoch) + '_gap_gas.csv';
+    out_filename = os.path.join(os.path.dirname(img_dir), out_filename);
+    if not os.path.isdir(out_cam_dir) :
+        os.mkdir(out_cam_dir);
 
+    out_fhand = get_file_handle(out_filename, 'wb+');
+    out_fhand.write('path,target,predicted\n');
 
-    images_all = datasets_ccsjtu.make_dataset_test(img_dir, ann_dir);
+    images = datasets_carpk.make_dataset_test(img_dir, gam_dir, ann_dir);
     time_start = time.time()
 
-    for sub_dir in images_all :
-        images = images_all[sub_dir];
-        out_fhand = get_file_handle(os.path.join(out_res_dir, sub_dir + ".csv"), 'wb+');
-        for i, (img_path, target) in enumerate(images):
-            # measure data loading time
-            data_time.update(time.time() - time_start);
+    for i, (img_path, gam_path, target) in enumerate(images):
+        # measure data loading time
+        data_time.update(time.time() - time_start);
 
-            input = test_transform(datasets_ccsjtu.default_loader(img_path)).unsqueeze(0);
-            input_var = torch.autograd.Variable(input, volatile=True).cuda();
+        input = test_transform(datasets_carpk.default_loader(img_path)).unsqueeze(0);
+        input_var = torch.autograd.Variable(input, volatile=True).cuda();
 
-            # compute output
-            output_count, output_cam = model(input_var);
-            output_cam = output_cam.data.cpu().view(output_cam.size(0), 72, 90).squeeze();
-            pred = int(round(output_count.data.cpu()[0,0]));
+        # compute output
+        output_count, output_cam = model(input_var);
+        output_cam = output_cam.data.cpu().view(output_cam.size(0), 45, 80).squeeze();
+        pred = int(round(output_count.data.cpu()[0,0]));
 
-            out_fhand.write(os.path.basename(img_path) + ',' + str(target) + ',' + str(pred) + '\n');
-            # convert to cam image using colormap conversion
-            output_cam = output_cam.numpy();
-            output_cam = cv2.resize(output_cam, None, fx=8, fy=8, interpolation=cv2.INTER_CUBIC);
-            output_cam = (output_cam-output_cam.min())/(output_cam.max()-output_cam.min());
-            scipy.io.savemat(os.path.join(out_cam_dir,
-                                os.path.splitext(os.path.basename(img_path))[0] + '.mat'),
-                                {'data':output_cam}
-                            );
-            # measure elapsed time
-            batch_time.update(time.time() - time_start);
-            time_start = time.time();
+        out_fhand.write(os.path.basename(img_path) + ',' + str(target) + ',' + str(pred) + '\n');
+        # convert to cam image using colormap conversion
+        output_cam = output_cam.numpy();
+        output_cam = cv2.resize(output_cam, None, fx=8, fy=8, interpolation=cv2.INTER_CUBIC);
+        output_cam = (output_cam-output_cam.min())/(output_cam.max()-output_cam.min());
+        scipy.io.savemat(os.path.join(out_cam_dir,
+                            os.path.splitext(os.path.basename(img_path))[0] + '.mat'),
+                            {'data':output_cam}
+                        );
+        # measure elapsed time
+        batch_time.update(time.time() - time_start);
+        time_start = time.time();
 
-            print('Batch: [{0}/{1}]\t'
-                  'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-                  'Data {data_time.val:.3f} ({data_time.avg:.3f})'.format(
-                   i+1, len(images), batch_time=batch_time, data_time=data_time));
+        print('Batch: [{0}/{1}]\t'
+              'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
+              'Data {data_time.val:.3f} ({data_time.avg:.3f})'.format(
+               i+1, len(images), batch_time=batch_time, data_time=data_time));
 
-        out_fhand.close();
+    out_fhand.close();
 
 
 class AverageMeter(object):

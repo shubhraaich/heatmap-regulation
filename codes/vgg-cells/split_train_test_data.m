@@ -1,7 +1,7 @@
 clear all; close all; clc;
 
 % =========================================================== %
-base_path = '/media/aich/DATA/vgg_cells';
+base_path = '../../data/vgg_cells';
 zip_file_name = 'cells.zip';
 in_path = 'cells';
 train_path = 'train_split';
